@@ -150,6 +150,51 @@ class Asteroid {
   }
 }
 
+// ── Skins ───────────────────────────────────────────────────────────────────────
+const SKIN_KEY = 'asteroids-skin';
+const SKINS = [
+  {
+    id: 'classic', name: 'CLASICA', color: '#fff',
+    path: [[20, 0], [-12, -9], [-7, 0], [-12, 9]],
+  },
+  {
+    id: 'dardo', name: 'DARDO', color: '#39ff14',
+    path: [[24, 0], [-12, -6], [-6, 0], [-12, 6]],
+  },
+  {
+    id: 'titan', name: 'TITAN', color: '#ff5a3c',
+    path: [[16, 0], [-10, -12], [-5, 0], [-10, 12]],
+  },
+];
+let skinIndex = 0;
+
+function getSkin() {
+  return SKINS[skinIndex] || SKINS[0];
+}
+
+function loadSkin() {
+  try {
+    const saved = localStorage.getItem(SKIN_KEY);
+    const idx = SKINS.findIndex(s => s.id === saved);
+    skinIndex = idx >= 0 ? idx : 0;
+  } catch {
+    skinIndex = 0;
+  }
+}
+
+function saveSkin() {
+  try {
+    localStorage.setItem(SKIN_KEY, getSkin().id);
+  } catch {
+    // Sin persistencia disponible, la skin solo vive en sesión
+  }
+}
+
+function nextSkin() {
+  skinIndex = (skinIndex + 1) % SKINS.length;
+  saveSkin();
+}
+
 // ── Ship ──────────────────────────────────────────────────────────────────────
 class Ship {
   constructor() { this.reset(); }
@@ -210,16 +255,16 @@ class Ship {
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
-    ctx.strokeStyle = this.speedTimer > 0 ? '#0ff' : '#fff';
+    const skin = getSkin();
+    ctx.strokeStyle = this.speedTimer > 0 ? '#0ff' : skin.color;
     ctx.lineWidth   = 1.5;
     ctx.lineJoin    = 'round';
 
-    // Silueta clásica: triángulo con muesca trasera
+    // Silueta según skin activa
     ctx.beginPath();
-    ctx.moveTo( 20,  0);   // nariz
-    ctx.lineTo(-12, -9);   // ala izquierda
-    ctx.lineTo( -7,  0);   // muesca trasera
-    ctx.lineTo(-12,  9);   // ala derecha
+    ctx.moveTo(skin.path[0][0], skin.path[0][1]);
+    for (let i = 1; i < skin.path.length; i++)
+      ctx.lineTo(skin.path[i][0], skin.path[i][1]);
     ctx.closePath();
     ctx.stroke();
 
@@ -415,6 +460,8 @@ function killShip() {
 
 // ── Update ────────────────────────────────────────────────────────────────────
 function update(dt) {
+  if (pressed('KeyC') && state !== 'gameover') nextSkin();
+
   if (state === 'gameover') {
     if (pressed('Space')) initGame();
     particles.forEach(p => p.update(dt));
@@ -507,11 +554,11 @@ function update(dt) {
 }
 
 // ── Draw ──────────────────────────────────────────────────────────────────────
-function drawLifeIcon(x, y) {
+function drawLifeIcon(x, y, color) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(-Math.PI / 2);
-  ctx.strokeStyle = '#fff';
+  ctx.strokeStyle = color;
   ctx.lineWidth   = 1.2;
   ctx.lineJoin    = 'round';
   ctx.beginPath();
@@ -535,7 +582,11 @@ function drawHUD() {
   ctx.fillText(`NIVEL ${level}`, W / 2, 26);
 
   for (let i = 0; i < lives; i++)
-    drawLifeIcon(W - 16 - i * 22, 18);
+    drawLifeIcon(W - 16 - i * 22, 18, getSkin().color);
+
+  ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(255,255,255,0.65)';
+  ctx.fillText(`NAVE ${getSkin().name} [C]`, W - 14, H - 14);
 
   if (ship.speedTimer > 0) {
     ctx.textAlign = 'left';
@@ -581,5 +632,6 @@ function loop(ts) {
   requestAnimationFrame(loop);
 }
 
+loadSkin();
 initGame();
 requestAnimationFrame(loop);
