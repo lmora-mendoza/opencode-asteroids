@@ -166,6 +166,7 @@ class Ship {
     this.shootCooldown = 0;
     this.speedTimer    = 0;
     this.shieldTimer   = 0;
+    this.tripleTimer   = 0;
     this.dead          = false;
   }
 
@@ -175,6 +176,7 @@ class Ship {
     if (this.shootCooldown > 0) this.shootCooldown -= dt;
     if (this.speedTimer    > 0) this.speedTimer    -= dt;
     if (this.shieldTimer   > 0) this.shieldTimer   -= dt;
+    if (this.tripleTimer   > 0) this.tripleTimer   -= dt;
 
     const ROT   = 3.5;   // rad/s
     const THRUST = 260 * (this.speedTimer > 0 ? 2 : 1);  // px/s²
@@ -201,7 +203,9 @@ class Ship {
     const NOSE = 21;
     const ox = this.x + Math.cos(this.angle) * NOSE;
     const oy = this.y + Math.sin(this.angle) * NOSE;
-    return [new Bullet(ox, oy, this.angle)];
+    if (this.tripleTimer <= 0) return [new Bullet(ox, oy, this.angle)];
+    return [this.angle - TRIPLE_SPREAD, this.angle, this.angle + TRIPLE_SPREAD]
+      .map(a => new Bullet(ox, oy, a));
   }
 
   draw() {
@@ -212,7 +216,9 @@ class Ship {
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
-    ctx.strokeStyle = this.speedTimer > 0 ? '#0ff' : '#fff';
+    ctx.strokeStyle = this.tripleTimer > 0
+      ? (this.speedTimer > 0 ? '#0f0' : TRIPLE_COLOR)
+      : (this.speedTimer > 0 ? '#0ff' : '#fff');
     ctx.lineWidth   = 1.5;
     ctx.lineJoin    = 'round';
 
@@ -283,11 +289,16 @@ class Particle {
   }
 }
 
-// ── PowerUp (velocidad / escudo) ────────────────────────────────────────────────
+// ── PowerUp (velocidad / escudo / triple) ───────────────────────────────────────
 const SPEED_DURATION = 5;   // segundos de efecto
 const SPEED_POINTS   = 50;  // puntos por recogerlo
 const SHIELD_DURATION = 8;  // segundos de escudo
 const SHIELD_POINTS   = 50; // puntos por recogerlo
+const TRIPLE_DURATION = 5;  // segundos de efecto
+const TRIPLE_POINTS   = 50; // puntos por recogerlo
+const TRIPLE_SPREAD   = 0.18; // apertura del abanico (rad)
+const TRIPLE_COLOR    = '#f0f';
+const SHIELD_COLOR    = '#4da6ff';
 
 class PowerUp {
   constructor(x, y, type = 'speed') {
@@ -313,10 +324,10 @@ class PowerUp {
   draw() {
     // Parpadeo antes de expirar
     if (this.ttl < 3 && Math.floor(this.ttl * 8) % 2 === 0) return;
+    const color = this.type === 'shield' ? SHIELD_COLOR : this.type === 'triple' ? TRIPLE_COLOR : '#0ff';
+    const label = this.type === 'shield' ? 'S' : this.type === 'triple' ? '3' : 'V';
     ctx.save();
     ctx.translate(this.x, this.y);
-    const isShield = this.type === 'shield';
-    const color = isShield ? '#4da6ff' : '#0ff';
     ctx.strokeStyle = color;
     ctx.lineWidth   = 1.5;
     ctx.beginPath();
@@ -329,7 +340,7 @@ class PowerUp {
     ctx.fillStyle = color;
     ctx.font = 'bold 10px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(isShield ? 'S' : 'V', 0, 4);
+    ctx.fillText(label, 0, 4);
     ctx.restore();
   }
 }
@@ -341,6 +352,7 @@ let state;      // 'playing' | 'dead' | 'gameover'
 let deadTimer;
 let powerupTimer;
 let shieldPowerupTimer;
+let triplePowerupTimer;
 let fugazTimer;
 
 function spawnAsteroids(count) {
@@ -371,6 +383,10 @@ function resetPowerupTimer() {
 
 function resetShieldPowerupTimer() {
   shieldPowerupTimer = rand(12, 20);
+}
+
+function resetTriplePowerupTimer() {
+  triplePowerupTimer = rand(10, 18);
 }
 
 function resetFugazTimer() {
@@ -406,6 +422,7 @@ function initGame() {
   state  = 'playing';
   resetPowerupTimer();
   resetShieldPowerupTimer();
+  resetTriplePowerupTimer();
   resetFugazTimer();
   spawnAsteroids(4);
 }
@@ -417,6 +434,7 @@ function nextLevel() {
   powerups  = [];
   resetPowerupTimer();
   resetShieldPowerupTimer();
+  resetTriplePowerupTimer();
   resetFugazTimer();
   ship.reset();
   spawnAsteroids(3 + level);
@@ -474,18 +492,25 @@ function update(dt) {
   particles = particles.filter(p => !p.dead);
   powerups  = powerups.filter(p => !p.dead);
 
-  // Aparición periódica del power-up
+  // Aparición periódica del power-up de velocidad
   powerupTimer -= dt;
   if (powerupTimer <= 0) {
-    if (powerups.length < 2) spawnPowerup('speed');
+    if (powerups.filter(p => p.type === 'speed').length < 2) spawnPowerup('speed');
     resetPowerupTimer();
   }
 
   // Aparición periódica del escudo
   shieldPowerupTimer -= dt;
   if (shieldPowerupTimer <= 0) {
-    if (powerups.length < 2) spawnPowerup('shield');
+    if (powerups.filter(p => p.type === 'shield').length < 2) spawnPowerup('shield');
     resetShieldPowerupTimer();
+  }
+
+  // Aparición periódica del power-up triple (separado)
+  triplePowerupTimer -= dt;
+  if (triplePowerupTimer <= 0) {
+    if (powerups.filter(p => p.type === 'triple').length < 2) spawnPowerup('triple');
+    resetTriplePowerupTimer();
   }
 
   // Aparición periódica de la estrella fugaz
@@ -503,6 +528,9 @@ function update(dt) {
         if (p.type === 'shield') {
           ship.shieldTimer = SHIELD_DURATION;
           score += SHIELD_POINTS;
+        } else if (p.type === 'triple') {
+          ship.tripleTimer = TRIPLE_DURATION;
+          score += TRIPLE_POINTS;
         } else {
           ship.speedTimer = SPEED_DURATION;
           score += SPEED_POINTS;
@@ -597,9 +625,18 @@ function drawHUD() {
   }
   if (ship.shieldTimer > 0) {
     ctx.textAlign = 'left';
-    ctx.fillStyle = '#4da6ff';
-    const y = ship.speedTimer > 0 ? H - 34 : H - 14;
+    ctx.fillStyle = SHIELD_COLOR;
+    let y = H - 14;
+    if (ship.speedTimer > 0) y -= 20;
+    if (ship.tripleTimer > 0) y -= 20;
     ctx.fillText(`ESCUDO  ${ship.shieldTimer.toFixed(1)}s`, 14, y);
+  }
+
+  if (ship.tripleTimer > 0) {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = TRIPLE_COLOR;
+    const y = ship.speedTimer > 0 ? H - 34 : H - 14;
+    ctx.fillText(`TRIPLE x3  ${ship.tripleTimer.toFixed(1)}s`, 14, y);
   }
 }
 
