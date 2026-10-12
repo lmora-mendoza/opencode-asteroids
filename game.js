@@ -165,6 +165,7 @@ class Ship {
     this.invincible    = 3;
     this.shootCooldown = 0;
     this.speedTimer    = 0;
+    this.tripleTimer   = 0;
     this.dead          = false;
   }
 
@@ -173,6 +174,7 @@ class Ship {
     if (this.invincible    > 0) this.invincible    -= dt;
     if (this.shootCooldown > 0) this.shootCooldown -= dt;
     if (this.speedTimer    > 0) this.speedTimer    -= dt;
+    if (this.tripleTimer   > 0) this.tripleTimer   -= dt;
 
     const ROT   = 3.5;   // rad/s
     const THRUST = 260 * (this.speedTimer > 0 ? 2 : 1);  // px/s²
@@ -199,7 +201,9 @@ class Ship {
     const NOSE = 21;
     const ox = this.x + Math.cos(this.angle) * NOSE;
     const oy = this.y + Math.sin(this.angle) * NOSE;
-    return [new Bullet(ox, oy, this.angle)];
+    if (this.tripleTimer <= 0) return [new Bullet(ox, oy, this.angle)];
+    return [this.angle - TRIPLE_SPREAD, this.angle, this.angle + TRIPLE_SPREAD]
+      .map(a => new Bullet(ox, oy, a));
   }
 
   draw() {
@@ -210,7 +214,9 @@ class Ship {
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
-    ctx.strokeStyle = this.speedTimer > 0 ? '#0ff' : '#fff';
+    ctx.strokeStyle = this.tripleTimer > 0
+      ? (this.speedTimer > 0 ? '#0f0' : TRIPLE_COLOR)
+      : (this.speedTimer > 0 ? '#0ff' : '#fff');
     ctx.lineWidth   = 1.5;
     ctx.lineJoin    = 'round';
 
@@ -270,14 +276,19 @@ class Particle {
   }
 }
 
-// ── PowerUp (velocidad) ─────────────────────────────────────────────────────────
+// ── PowerUp (velocidad / triple) ────────────────────────────────────────────────
 const SPEED_DURATION = 5;   // segundos de efecto
 const SPEED_POINTS   = 50;  // puntos por recogerlo
+const TRIPLE_DURATION = 5;  // segundos de efecto
+const TRIPLE_POINTS   = 50; // puntos por recogerlo
+const TRIPLE_SPREAD   = 0.18; // apertura del abanico (rad)
+const TRIPLE_COLOR    = '#f0f';
 
 class PowerUp {
-  constructor(x, y) {
+  constructor(x, y, kind = 'speed') {
     this.x = x;
     this.y = y;
+    this.kind = kind;
     const angle = rand(0, Math.PI * 2);
     const speed = 20;
     this.vx = Math.cos(angle) * speed;
@@ -297,9 +308,11 @@ class PowerUp {
   draw() {
     // Parpadeo antes de expirar
     if (this.ttl < 3 && Math.floor(this.ttl * 8) % 2 === 0) return;
+    const color = this.kind === 'triple' ? TRIPLE_COLOR : '#0ff';
+    const label = this.kind === 'triple' ? '3' : 'V';
     ctx.save();
     ctx.translate(this.x, this.y);
-    ctx.strokeStyle = '#0ff';
+    ctx.strokeStyle = color;
     ctx.lineWidth   = 1.5;
     ctx.beginPath();
     ctx.moveTo(0, -10);
@@ -308,10 +321,10 @@ class PowerUp {
     ctx.lineTo(-7, 0);
     ctx.closePath();
     ctx.stroke();
-    ctx.fillStyle = '#0ff';
+    ctx.fillStyle = color;
     ctx.font = 'bold 10px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText('V', 0, 4);
+    ctx.fillText(label, 0, 4);
     ctx.restore();
   }
 }
@@ -322,6 +335,7 @@ let score, lives, level;
 let state;      // 'playing' | 'dead' | 'gameover'
 let deadTimer;
 let powerupTimer;
+let triplePowerupTimer;
 let fugazTimer;
 
 function spawnAsteroids(count) {
@@ -336,18 +350,22 @@ function spawnAsteroids(count) {
   }
 }
 
-function spawnPowerup() {
+function spawnPowerup(kind = 'speed') {
   const SAFE_DIST = 130;
   let x, y;
   do {
     x = rand(0, W);
     y = rand(0, H);
   } while (Math.hypot(x - W / 2, y - H / 2) < SAFE_DIST);
-  powerups.push(new PowerUp(x, y));
+  powerups.push(new PowerUp(x, y, kind));
 }
 
 function resetPowerupTimer() {
   powerupTimer = rand(8, 15);
+}
+
+function resetTriplePowerupTimer() {
+  triplePowerupTimer = rand(10, 18);
 }
 
 function resetFugazTimer() {
@@ -382,6 +400,7 @@ function initGame() {
   level  = 1;
   state  = 'playing';
   resetPowerupTimer();
+  resetTriplePowerupTimer();
   resetFugazTimer();
   spawnAsteroids(4);
 }
@@ -392,6 +411,7 @@ function nextLevel() {
   particles = [];
   powerups  = [];
   resetPowerupTimer();
+  resetTriplePowerupTimer();
   resetFugazTimer();
   ship.reset();
   spawnAsteroids(3 + level);
@@ -449,11 +469,18 @@ function update(dt) {
   particles = particles.filter(p => !p.dead);
   powerups  = powerups.filter(p => !p.dead);
 
-  // Aparición periódica del power-up
+  // Aparición periódica del power-up de velocidad
   powerupTimer -= dt;
   if (powerupTimer <= 0) {
-    if (powerups.length < 2) spawnPowerup();
+    if (powerups.filter(p => p.kind === 'speed').length < 2) spawnPowerup('speed');
     resetPowerupTimer();
+  }
+
+  // Aparición periódica del power-up triple (separado)
+  triplePowerupTimer -= dt;
+  if (triplePowerupTimer <= 0) {
+    if (powerups.filter(p => p.kind === 'triple').length < 2) spawnPowerup('triple');
+    resetTriplePowerupTimer();
   }
 
   // Aparición periódica de la estrella fugaz
@@ -468,8 +495,13 @@ function update(dt) {
     for (const p of powerups) {
       if (!p.dead && dist(ship, p) < ship.radius + p.radius) {
         p.dead = true;
-        ship.speedTimer = SPEED_DURATION;
-        score += SPEED_POINTS;
+        if (p.kind === 'triple') {
+          ship.tripleTimer = TRIPLE_DURATION;
+          score += TRIPLE_POINTS;
+        } else {
+          ship.speedTimer = SPEED_DURATION;
+          score += SPEED_POINTS;
+        }
         explode(p.x, p.y, 6);
       }
     }
@@ -541,6 +573,13 @@ function drawHUD() {
     ctx.textAlign = 'left';
     ctx.fillStyle = '#0ff';
     ctx.fillText(`VELOCIDAD x2  ${ship.speedTimer.toFixed(1)}s`, 14, H - 14);
+  }
+
+  if (ship.tripleTimer > 0) {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = TRIPLE_COLOR;
+    const y = ship.speedTimer > 0 ? H - 34 : H - 14;
+    ctx.fillText(`TRIPLE x3  ${ship.tripleTimer.toFixed(1)}s`, 14, y);
   }
 }
 
